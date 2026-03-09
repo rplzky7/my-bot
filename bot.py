@@ -1,6 +1,24 @@
 import logging
+import os
+from flask import Flask
+from threading import Thread
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# --- חלק ה"טריק" לשמירה על הבוט ער (חובה ב-Render) ---
+server = Flask(__name__)
+
+@server.route('/')
+def home():
+    return "I am alive!"
+
+def run():
+    server.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+# ---------------------------------------------------
 
 # הגדרות
 TOKEN = "8799447400:AAEah-A0AUzq2h0bdAugdhVMJYt2MmP-yrg"
@@ -12,7 +30,6 @@ active_chats = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# פונקציה לקבלת שם תצוגה נוח (Username או שם פרטי)
 def get_user_display(user):
     if user.username:
         return f"@{user.username}"
@@ -31,7 +48,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def find_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    
     if user_id in active_chats:
         await update.message.reply_text("אתה כבר בשיחה פעילה!")
         return
@@ -43,11 +59,9 @@ async def find_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         partner_id = waiting_users.pop(0)
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
-        
         await context.bot.send_message(user_id, "נמצא משתמש! אפשר להתחיל לדבר.")
         await context.bot.send_message(partner_id, "נמצא משתמש! אפשר להתחיל לדבר.")
     else:
-        # אם אין אף אחד, נבדוק אם לחבר למנהל
         if ADMIN_ID not in active_chats and user_id != ADMIN_ID:
             active_chats[user_id] = ADMIN_ID
             active_chats[ADMIN_ID] = user_id
@@ -68,19 +82,8 @@ async def exit_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        
-        # ניטור למנהל עם שם משתמש
-        if user_id != ADMIN_ID and partner_id != ADMIN_ID:
-            sender_name = get_user_display(update.message.from_user)
-            # בשביל שם המקבל, נצטרך את המידע שלו (בגרסה פשוטה זו נציג רק ID למקבל או שנשמור שמות בזיכרון)
-            monitor_header = f"🕵️ **ניטור שיחה:**\nשולח: {sender_name} (ID: {user_id})\nאל פרטנר ID: {partner_id}\n---"
-            await context.bot.send_message(ADMIN_ID, monitor_header)
-            await update.message.copy(ADMIN_ID)
-
-        # שליחת ההודעה (טקסט, תמונה, קובץ, קול וכו') לצד השני
         try:
             await update.message.copy(partner_id)
         except Exception as e:
@@ -91,20 +94,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"המספר הסידורי שלך 🆔: {update.message.from_user.id}")
 
-def main():
-    app = Application.builder().token(TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("chat", find_chat))
-    app.add_handler(CommandHandler("exit", exit_chat))
-    app.add_handler(CommandHandler("me", show_me))
-    
-    # תומך בכל סוגי ההודעות (טקסט וקבצים)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-    
-    print("הבוט של Rafael Digital רץ...")
-    app.run_polling()
+# יצירת האפליקציה מחוץ לפונקציה כדי ש-Gunicorn יזהה אותה
+app = Application.builder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("chat", find_chat))
+app.add_handler(CommandHandler("exit", exit_chat))
+app.add_handler(CommandHandler("me", show_me))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
-    main()
+    # הפעלת שרת ה-Keep Alive
+    keep_alive()
+    # הרצת הבוט
+    print("הבוט של Rafael Digital רץ ב-Render...")
+    app.run_polling()
 
